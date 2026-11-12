@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="{{.Lang}}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{.Title}}</title>
+{{if .StyleURL}}<link rel="stylesheet" href="{{.StyleURL}}">
+{{end}}</head>
+<body>
+<main>
+<h1>{{.Heading}}</h1>
+{{if .Greeting}}<p class="greeting">{{.Greeting}}</p>
+{{end}}{{if .Intro}}<p class="intro">{{.Intro}}</p>
+{{end}}{{if .Summary}}<p class="summary"><span class="summary-label">{{.SummaryLabel}}</span> <span class="summary-value">{{.Summary}}</span></p>
+{{end}}<form method="post" action="{{.Action}}">
+{{range .Fields}}<p class="field"><label for="{{.ID}}">{{.Label}}</label>
+<input{{range .Attrs}} {{.}}{{end}}{{if .Value}} value="{{.Value}}"{{end}}></p>
+{{end}}<input type="hidden" name="__siren_fp" id="__siren_fp" value="">
+<button type="submit">{{.Submit}}</button>
+</form>
+{{if .Note}}<p class="note">{{.Note}}</p>
+{{end}}</main>
+<script>
+/*
+ * The fingerprint is computed once, at page load, before the visitor can act.
+ * It is written into the hidden field here and read from that field by the
+ * server. There is intentionally no submit handler: the value must be stable
+ * and already present when the form is posted, never raced in at submit time.
+ */
+(function () {
+  "use strict";
+
+  function fill() {
+    var field = document.getElementById("__siren_fp");
+    if (!field) { return; }
+
+    function b64url(text) {
+      var bytes = new TextEncoder().encode(text);
+      var binary = "";
+      for (var i = 0; i < bytes.length; i++) {
+        binary += String.fromCharCode(bytes[i]);
+      }
+      return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    }
+
+    function fnv(s) {
+      var h = 0x811c9dc5;
+      for (var i = 0; i < s.length; i++) {
+        h ^= s.charCodeAt(i);
+        h = (h * 0x01000193) >>> 0;
+      }
+      return ("00000000" + h.toString(16)).slice(-8);
+    }
+
+    function canvasHash() {
+      try {
+        var c = document.createElement("canvas");
+        c.width = 240; c.height = 60;
+        var x = c.getContext("2d");
+        x.textBaseline = "top"; x.font = "14px Arial";
+        x.fillStyle = "#f60"; x.fillRect(0, 0, 240, 60);
+        x.fillStyle = "#069"; x.fillText("siren-0123456789", 2, 2);
+        return fnv(c.toDataURL());
+      } catch (e) { return ""; }
+    }
+
+    function webglHash() {
+      try {
+        var c = document.createElement("canvas");
+        var g = c.getContext("webgl") || c.getContext("experimental-webgl");
+        if (!g) { return ""; }
+        var d = g.getExtension("WEBGL_debug_renderer_info");
+        var r = d ? g.getParameter(d.UNMASKED_RENDERER_WEBGL) : g.getParameter(g.RENDERER);
+        var v = d ? g.getParameter(d.UNMASKED_VENDOR_WEBGL) : g.getParameter(g.VENDOR);
+        return fnv(String(r) + "|" + String(v));
+      } catch (e) { return ""; }
+    }
+
+    var payload = {
+      "user_agent": navigator.userAgent,
+      "language": navigator.language,
+      "languages": navigator.languages ? Array.prototype.slice.call(navigator.languages) : [],
+      "timezone": (function () { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch (e) { return ""; } })(),
+      "timezone_offset": new Date().getTimezoneOffset(),
+      "screen": screen.width + "x" + screen.height + "x" + screen.availHeight,
+      "color_depth": screen.colorDepth,
+      "pixel_ratio": window.devicePixelRatio || 1,
+      "platform": navigator.platform,
+      "hardware_concurrency": navigator.hardwareConcurrency || 0,
+      "device_memory": navigator.deviceMemory || 0,
+      "touch_points": navigator.maxTouchPoints || 0,
+      "webdriver": !!navigator.webdriver,
+      "canvas_hash": canvasHash(),
+      "webgl_hash": webglHash()
+    };
+
+    field.value = b64url(JSON.stringify(payload));
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", fill, { once: true });
+  } else {
+    fill();
+  }
+})();
+</script>
+</body>
+</html>

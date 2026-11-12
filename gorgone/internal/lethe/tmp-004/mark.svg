@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" role="img" aria-label="Account recovery">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f59e0b"/>
+      <stop offset="1" stop-color="#8a3f07"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="5" width="32" height="38" rx="4" fill="url(#g)"/>
+  <path fill="#fff" opacity=".9" d="M15 14h18v3H15zm0 7h18v3H15zm0 7h12v3H15z"/>
+  <circle cx="32" cy="34" r="5" fill="none" stroke="#fff" stroke-width="3"/>
+  <path fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" d="M32 29v-3"/>
+</svg>

@@ -1,0 +1,68 @@
+# ── stage 1: build ───────────────────────────────────────────────────────────
+FROM golang:1.22-alpine AS builder
+
+# B2 — explicitly install CA certificates so they are present in the builder
+# layer for COPY to the scratch image.  golang:alpine ships them, but declaring
+# the dependency makes the intent clear and survives a base-image respin that
+# might drop them.
+RUN apk add --no-cache ca-certificates
+
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+# CGO_ENABLED=0 produces a fully static binary with no libc dependency.
+# -trimpath removes local path information from the binary (obfuscation).
+# -ldflags removes the symbol table and DWARF debug information.
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build \
+      -trimpath \
+      -ldflags="-s -w" \
+      -o /sirencore \
+      ./cmd/sirencore
+
+# B3 / B4 — create /data with the correct owner while we still have a shell.
+# COPY /dev/null is fragile (depends on /dev/null being a regular file on the
+# host after COPY semantics flatten it).  Instead, mkdir + touch in the builder,
+# then COPY the directory tree with --chown so scratch inherits the metadata.
+RUN mkdir -p /runtime/data && \
+    touch /runtime/data/.keep && \
+    chmod 700 /runtime/data && \
+    chown -R 1000:1000 /runtime
+
+# ── stage 2: runtime ─────────────────────────────────────────────────────────
+# scratch has no shell, no libc, no package manager.
+FROM scratch
+
+# Non-root uid/gid. Hardcoded because scratch has no useradd.
+USER 1000:1000
+
+# B1 — CA certificates for STARTTLS SMTP and IMAPS (apostle).
+# Without this every TLS connection in the container fails with x509 errors.
+# Source: golang:alpine after `apk add --no-cache ca-certificates` above.
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+
+# Copy the statically-linked binary.
+COPY --from=builder /sirencore /sirencore
+
+# B4 — copy the data directory created in the builder with correct ownership.
+# This sets the base permissions for the named volume mount point.
+# Docker overlays root:root 0755 on top during `docker volume create`; the
+# volume-init service in docker-compose.yml runs:
+#   chown 1000:1000 /data && chmod 700 /data
+# to restore ownership after the mount.  checkDataDirMode in sirencore then
+# enforces 0700 at startup and exits if the mode is too permissive.
+COPY --from=builder --chown=1000:1000 /runtime/data /data
+
+# Expose the listening port. The default config binds 0.0.0.0:8080.
+EXPOSE 8080
+
+# SIREN_KEY_FILE points to the Docker secret.
+# B1 (key permissions): Docker mounts secrets as root:root 0444.
+# LoadKeyFile accepts 0444 (read-only, no write bits → &0o022 == 0).
+ENV SIREN_KEY_FILE=/run/secrets/siren-key
+
+ENTRYPOINT ["/sirencore"]
+CMD ["-config", "/config/config.json"]

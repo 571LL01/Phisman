@@ -1,0 +1,141 @@
+# SIREN-CORE docker-compose production template.
+#
+# Variables (set in .env or the shell before `docker compose up`):
+#
+#   SIREN_IMAGE          Docker image tag, e.g. siren-core:latest
+#   SIREN_CONTAINER_NAME Container name, e.g. siren-prod-acme.
+#
+# Secrets (file path below; for Swarm use docker secret create):
+#
+#   siren-key  32-byte raw AES-256-GCM key at /run/secrets/siren-key.
+#              Docker mounts secrets as root:root 0444.  LoadKeyFile accepts
+#              0444 (&0o022 == 0: no write bits for group or others).
+#              Generate: openssl rand -out secrets/siren-key 32
+#
+#   admin-password-hash  PBKDF2 verifier, one line:
+#              pbkdf2$600000$<salt-hex>$<hash-hex>
+#   admin-totp-secret    base32 RFC 6238 secret, one line.
+#   admin-csrf-secret    32 raw random bytes, NO trailing newline.
+#              Generate: openssl rand -out secrets/admin-csrf-secret 32
+#
+#   The admin block in config.json points at these three files. A secret
+#   written directly in config.json is refused by strict JSON decoding.
+#
+# Networking note (B4 — ports 127.0.0.1):
+#
+#   The port binding `127.0.0.1:8080:8080` restricts external access to the
+#   loopback interface.  In production, place a TLS-terminating reverse proxy
+#   (nginx, caddy, traefik) on the same host that forwards HTTPS → 127.0.0.1:8080.
+#   The admin cookie requires Secure=true, which the proxy provides.
+#   Direct HTTP exposure over a public interface is insecure.
+
+services:
+
+  # ── B4 — init container: chown 1000:1000 AND chmod 700 ───────────────────
+  # Docker creates named volumes as root:root 0755.  Without chown the
+  # 1000:1000 container process cannot write.  Without chmod, checkDataDirMode
+  # refuses to start sirencore.  Both operations are required.
+  volume-init:
+    image: busybox:stable-musl
+    user: "0:0"
+    volumes:
+      - siren-data:/data
+    command: ["sh", "-c", "chown 1000:1000 /data && chmod 700 /data"]
+    restart: "no"
+
+  # ── main application ──────────────────────────────────────────────────────
+  sirencore:
+    image: "${SIREN_IMAGE:-siren-core:latest}"
+    container_name: "${SIREN_CONTAINER_NAME:-siren-core}"
+    restart: unless-stopped
+    depends_on:
+      volume-init:
+        condition: service_completed_successfully
+
+    # Non-root; must match USER directive in Dockerfile.prod.
+    user: "1000:1000"
+
+    # Read-only root FS hardened against container escape.
+    read_only: true
+
+    # B2 — /tmp tmpfs for multipart upload spills.
+    # read_only: true without tmpfs means Go's net/http cannot write spill
+    # files when multipart uploads exceed multipartMemory (1 MiB), causing
+    # all TMP-003 certificate uploads > 1 MiB to fail with a 500.
+    # 64 MiB matches defaultMaxMultipart in internal/collect/middleware.go.
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+
+    volumes:
+      # Artifact database.  Named volume; ownership fixed by volume-init.
+      - siren-data:/data
+
+      # Operator-generated config (no secrets inside).
+      - type: bind
+        source: ./config.json
+        target: /config/config.json
+        read_only: true
+
+    secrets:
+      # 32-byte AES-256-GCM key.  Mounted as root:root 0444 by Docker.
+      # LoadKeyFile accepts 0444 (read-only, &0o022 == 0).
+      - siren-key
+
+      # File-backed admin secrets; never present in config.json.
+      - admin-password-hash
+      - admin-totp-secret
+      - admin-csrf-secret
+
+    environment:
+      SIREN_KEY_FILE: /run/secrets/siren-key
+
+    # Loopback only — requires a TLS-terminating reverse proxy on the same host.
+    # See networking note above.
+    ports:
+      - "127.0.0.1:8080:8080"
+
+    # B3 — scratch has no wget/curl. Use the binary's built-in -healthcheck flag.
+    # /sirencore -healthcheck reads the listen address from config.json,
+    # probes GET /healthz and exits 0 on HTTP 200, 1 on any failure.
+    healthcheck:
+      test: ["/sirencore", "-healthcheck", "-config", "/config/config.json"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+    # Drop all Linux capabilities except what a static HTTP server needs.
+    cap_drop:
+      - ALL
+
+    # Restrict new privileges after startup.
+    security_opt:
+      - no-new-privileges:true
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+volumes:
+  siren-data:
+    # Named volumes survive `docker compose down`.
+    # Use `docker compose down -v` to also remove the volume (destructive).
+    # Always back up with purge.sh before removal.
+    driver: local
+
+secrets:
+  siren-key:
+    # For Swarm: docker secret create siren-key -
+    # For compose-only deployments: provide the file path below.
+    file: ./secrets/siren-key
+
+  admin-password-hash:
+    file: ./secrets/admin-password-hash
+
+  admin-totp-secret:
+    file: ./secrets/admin-totp-secret
+
+  admin-csrf-secret:
+    file: ./secrets/admin-csrf-secret

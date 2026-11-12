@@ -1,0 +1,86 @@
+:root {
+  color-scheme: light dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: #eef1f5;
+  color: #1b2430;
+}
+
+main {
+  width: min(100%, 26rem);
+  padding: 2rem;
+  border-radius: 0.75rem;
+  background: #ffffff;
+  box-shadow: 0 1rem 3rem rgba(27, 36, 48, 0.12);
+}
+
+h1 {
+  margin: 0 0 1rem;
+  font-size: 1.5rem;
+}
+
+.greeting {
+  margin: 0 0 0.5rem;
+  font-weight: 600;
+}
+
+.intro,
+.note {
+  margin: 0 0 1rem;
+  color: #55606d;
+}
+
+.field {
+  margin: 0 0 0.875rem;
+}
+
+.field label {
+  display: block;
+  margin-bottom: 0.25rem;
+  font-size: 0.8125rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #55606d;
+}
+
+.field input {
+  width: 100%;
+  padding: 0.625rem 0.75rem;
+  border: 1px solid #c3cbd5;
+  border-radius: 0.375rem;
+  font: inherit;
+}
+
+.field input:focus {
+  outline: 2px solid #2f6fed;
+  outline-offset: 1px;
+  border-color: #2f6fed;
+}
+
+button {
+  width: 100%;
+  margin-top: 0.5rem;
+  padding: 0.75rem 1rem;
+  border: 0;
+  border-radius: 0.375rem;
+  background: #2f6fed;
+  color: #ffffff;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #2459c4;
+}

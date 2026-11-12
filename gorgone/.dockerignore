@@ -1,0 +1,39 @@
+# .dockerignore — files excluded from the Docker build context.
+#
+# CRITICAL: secrets/siren-key must never reach the build context. If it were
+# COPY'd into an image layer it would be readable by anyone with docker pull
+# access to that image, including CI workers that cache image layers.
+
+# Key material
+secrets/
+*.key
+*.pem
+*.p12
+*.pfx
+
+# Local exports (may contain cleartext artifact data)
+exports/
+
+# Development and test artefacts
+*.db
+*.db-wal
+*.db-shm
+data/
+
+# Editor and OS noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# Git history (not needed for build, adds ~MiB to context)
+.git/
+
+# CI configuration not needed in the image
+.github/
+
+# Test files
+*_test.go
+deploy/purge_test.sh

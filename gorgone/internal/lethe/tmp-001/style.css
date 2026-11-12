@@ -1,0 +1,146 @@
+/*
+ * TMP-001 — identity portal.
+ *
+ * This stylesheet belongs to the template, not to the renderer. The mark is
+ * referenced relative to this file, so it resolves under the same
+ * /assets/{campaign}/{template}/ prefix without a second route.
+ */
+
+:root {
+  color-scheme: light;
+  --ink: #10233f;
+  --muted: #5b6b80;
+  --line: #d5deea;
+  --accent: #1557c0;
+  --accent-dark: #0f3f8d;
+  --surface: #ffffff;
+  --canvas: #eaf0f8;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+  font: 16px/1.55 "Segoe UI", system-ui, -apple-system, sans-serif;
+  color: var(--ink);
+  background:
+    radial-gradient(circle at 15% 0%, #ffffff 0%, transparent 42%),
+    linear-gradient(155deg, #eaf0f8 0%, #dce6f4 100%);
+}
+
+main {
+  position: relative;
+  width: min(100%, 27rem);
+  padding: 2.25rem 2rem 2rem;
+  border: 1px solid rgba(16, 35, 63, 0.08);
+  border-radius: 1.125rem;
+  background: var(--surface);
+  box-shadow:
+    0 1.5rem 3rem rgba(16, 35, 63, 0.14),
+    0 0.25rem 0.75rem rgba(16, 35, 63, 0.06);
+}
+
+main::before {
+  content: "";
+  display: block;
+  width: 2.75rem;
+  height: 2.75rem;
+  margin-bottom: 1.25rem;
+  background: url("mark.svg") no-repeat center / contain;
+}
+
+h1 {
+  margin: 0 0 0.5rem;
+  font-size: 1.5rem;
+  line-height: 1.2;
+  letter-spacing: -0.015em;
+}
+
+.greeting {
+  margin: 0 0 0.875rem;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--accent-dark);
+}
+
+.intro {
+  margin: 0 0 1.5rem;
+  color: var(--muted);
+}
+
+.note {
+  margin: 1.25rem 0 0;
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
+  font-size: 0.8125rem;
+  color: var(--muted);
+}
+
+.field {
+  margin: 0 0 1rem;
+}
+
+.field label {
+  display: block;
+  margin-bottom: 0.375rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--ink);
+}
+
+.field input {
+  width: 100%;
+  padding: 0.75rem 0.875rem;
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  background: #fbfcfe;
+  color: var(--ink);
+  font: inherit;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.field input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(21, 87, 192, 0.16);
+}
+
+.field input[inputmode="numeric"] {
+  letter-spacing: 0.3em;
+  font-variant-numeric: tabular-nums;
+}
+
+button {
+  width: 100%;
+  margin-top: 0.5rem;
+  padding: 0.8125rem 1rem;
+  border: 0;
+  border-radius: 0.5rem;
+  background: linear-gradient(180deg, var(--accent) 0%, var(--accent-dark) 100%);
+  color: #ffffff;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button:hover {
+  filter: brightness(1.05);
+}
+
+button:focus-visible {
+  outline: 3px solid rgba(21, 87, 192, 0.35);
+  outline-offset: 2px;
+}
+
+@media (max-width: 28rem) {
+  main {
+    padding: 1.75rem 1.25rem;
+  }
+}

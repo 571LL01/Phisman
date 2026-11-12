@@ -1,0 +1,143 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+env:
+  GO_VERSION: "1.22"
+
+jobs:
+  # ── lint + format ──────────────────────────────────────────────────────────
+  fmt:
+    name: gofmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: gofmt check
+        run: |
+          bad=$(gofmt -l .)
+          if [ -n "$bad" ]; then
+            echo "Files not gofmt'd:"
+            echo "$bad"
+            exit 1
+          fi
+
+  # ── shell script linting ───────────────────────────────────────────────────
+  shellcheck:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: install shellcheck
+        run: sudo apt-get update -qq && sudo apt-get install -y shellcheck
+      - name: shellcheck deploy/purge.sh
+        # SC2046: word splitting on $(…) is intentional for CURL_ARGS array.
+        # SC2048: expanding array with "$@" is correct.
+        run: shellcheck --severity=warning --exclude=SC2016 deploy/purge.sh
+      - name: shellcheck deploy/purge_test.sh
+        run: shellcheck --severity=warning --exclude=SC2016 deploy/purge_test.sh
+      - name: shellcheck deploy/generate-config.sh
+        run: shellcheck --severity=warning deploy/generate-config.sh
+
+  # ── purge.sh integration tests ─────────────────────────────────────────────
+  purge-test:
+    name: purge.sh tests
+    runs-on: ubuntu-latest
+    needs: shellcheck
+    steps:
+      - uses: actions/checkout@v4
+      - name: install dependencies
+        # nc (netcat) for the fake HTTP server in purge_test.sh.
+        run: sudo apt-get update -qq && sudo apt-get install -y netcat-openbsd jq curl
+      - name: run purge_test.sh
+        run: bash deploy/purge_test.sh
+
+  # ── vet + build (CGO disabled, production mode) ───────────────────────────
+  build:
+    name: build CGO_ENABLED=0
+    runs-on: ubuntu-latest
+    needs: fmt
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: go vet
+        run: CGO_ENABLED=0 go vet ./...
+      - name: build (static, trimpath, stripped)
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+            go build \
+              -trimpath \
+              -ldflags="-s -w" \
+              -o /tmp/sirencore \
+              ./cmd/sirencore
+      - name: verify binary is static
+        run: |
+          file /tmp/sirencore | grep -q 'statically linked' || \
+          file /tmp/sirencore | grep -q 'static' || \
+          ldd /tmp/sirencore 2>&1 | grep -q 'not a dynamic executable' || \
+          { echo "binary is not static"; file /tmp/sirencore; exit 1; }
+
+  # ── unit tests (CGO disabled) ─────────────────────────────────────────────
+  test:
+    name: test CGO_ENABLED=0
+    runs-on: ubuntu-latest
+    needs: fmt
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: test
+        run: CGO_ENABLED=0 go test ./... -count=1 -timeout 300s
+
+  # ── race detector (CGO required, needs gcc) ───────────────────────────────
+  race:
+    name: test -race CGO_ENABLED=1
+    runs-on: ubuntu-latest
+    needs: fmt
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: install gcc
+        run: sudo apt-get update -qq && sudo apt-get install -y gcc
+      - name: test -race
+        run: CGO_ENABLED=1 go test -race ./... -count=1 -timeout 300s
+
+  # ── symlink tests (Linux only) ────────────────────────────────────────────
+  symlink:
+    name: symlink tests (Linux)
+    runs-on: ubuntu-latest
+    needs: fmt
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: run symlink-sensitive tests
+        # These tests create symlinks and are skipped on Windows/macOS.
+        # Running them explicitly here ensures they are never accidentally
+        # skipped by a platform mismatch.
+        run: |
+          CGO_ENABLED=0 go test ./... -count=1 -run 'Symlink|GuardKeyLocationResolvesSymlinks' -v \
+            | tee /tmp/symlink_out.txt
+          # Fail if any symlink test was skipped (SKIP output means the test
+          # was not exercised, which defeats the purpose of this job).
+          if grep -q '^--- SKIP' /tmp/symlink_out.txt; then
+            echo "ERROR: symlink tests were skipped on Linux — check build tags or runtime.GOOS guards"
+            cat /tmp/symlink_out.txt
+            exit 1
+          fi
