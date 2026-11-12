@@ -8,6 +8,11 @@ type EmailTemplate struct {
 	Name    string
 	Subject string
 	Body    string
+	// FromEmail and FromName pre-fill the sender-spoofing fields of the send
+	// form when the operator picks this template. Empty means "leave the
+	// operator's current From untouched".
+	FromEmail string
+	FromName  string
 }
 
 // BuiltinEmailTemplates are starting points an operator can pick in the send

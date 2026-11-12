@@ -652,6 +652,23 @@ bob@example.com,en,Bob</pre>
     <input type="text" id="prior" name="prior_step" placeholder="ex. a (laissez vide pour envoyer à tous)">
     <p class="hint">Vide = envoyer à tous les contacts de la campagne.</p>
   </div>
+  {{if $.EmailTemplates}}
+  <hr class="sep-line">
+  <p style="font-size:.8rem;font-weight:600;margin-bottom:.6rem">
+    Modèle d'email prêt à l'emploi <span style="color:var(--muted);font-weight:400">(choisissez d'abord : remplit l'expéditeur, le sujet et le corps ci-dessous)</span>
+  </p>
+  <div class="fg">
+    <label for="email_tmpl">Modèle</label>
+    <select id="email_tmpl"
+      onchange="var o=this.options[this.selectedIndex];if(o.dataset.subject!==undefined){document.getElementById('email_subject').value=o.dataset.subject;document.getElementById('email_body').value=o.dataset.body;if(o.dataset.from)document.getElementById('from_address').value=o.dataset.from;if(o.dataset.fromname)document.getElementById('from_name').value=o.dataset.fromname;}">
+      <option value="">— Partir d'un modèle (remplit expéditeur + sujet + corps) —</option>
+      {{range $.EmailTemplates}}
+      <option value="{{.ID}}" data-subject="{{.Subject}}" data-body="{{.Body}}" data-from="{{.FromEmail}}" data-fromname="{{.FromName}}">{{.Name}}</option>
+      {{end}}
+    </select>
+    <p class="hint">Choisir un modèle remplit l'expéditeur usurpé (si le modèle en fournit un) + le sujet et le corps ci-dessous ; vous pouvez ensuite les modifier. Le lien <code>&#123;&#123;.Link&#125;&#125;</code> et le pixel d'ouverture sont gérés automatiquement.</p>
+  </div>
+  {{end}}
   <hr class="sep-line">
   <p style="font-size:.8rem;font-weight:600;margin-bottom:.6rem">
     Usurpation de l'expéditeur <span style="color:var(--muted);font-weight:400">(optionnel — écrase le From global)</span>
@@ -681,19 +698,6 @@ bob@example.com,en,Bob</pre>
   <p style="font-size:.8rem;font-weight:600;margin-bottom:.6rem">
     Contenu du mail <span style="color:var(--muted);font-weight:400">(optionnel — laissez vide pour le texte par défaut)</span>
   </p>
-  {{if $.EmailTemplates}}
-  <div class="fg">
-    <label for="email_tmpl">Modèle d'email prêt à l'emploi</label>
-    <select id="email_tmpl"
-      onchange="var o=this.options[this.selectedIndex];if(o.dataset.subject!==undefined){document.getElementById('email_subject').value=o.dataset.subject;document.getElementById('email_body').value=o.dataset.body;}">
-      <option value="">— Partir d'un modèle (remplit sujet + corps) —</option>
-      {{range $.EmailTemplates}}
-      <option value="{{.ID}}" data-subject="{{.Subject}}" data-body="{{.Body}}">{{.Name}}</option>
-      {{end}}
-    </select>
-    <p class="hint">Choisir un modèle remplit les champs ci-dessous ; vous pouvez ensuite les modifier. Le lien <code>&#123;&#123;.Link&#125;&#125;</code> et le pixel d'ouverture sont gérés automatiquement.</p>
-  </div>
-  {{end}}
   <div class="fg">
     <label for="email_subject">Sujet</label>
     <input type="text" id="email_subject" name="email_subject"

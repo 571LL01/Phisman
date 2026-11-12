@@ -2,6 +2,7 @@ package mgmt
 
 import (
 	"bytes"
+	"html/template"
 	"strings"
 	"testing"
 )
@@ -122,13 +123,19 @@ func TestSendFormListsEmailTemplates(t *testing.T) {
 		t.Fatalf("send form missing email-template picker")
 	}
 	for _, et := range BuiltinEmailTemplates {
-		if !strings.Contains(out, et.Name) {
+		// Option text is auto-escaped by html/template (e.g. "&" -> "&amp;"),
+		// so compare against the escaped form.
+		if !strings.Contains(out, template.HTMLEscapeString(et.Name)) {
 			t.Fatalf("send form missing template %q", et.Name)
 		}
 	}
 	// The body data attribute must carry the {{.Link}} token for the operator.
 	if !strings.Contains(out, "data-body=") {
 		t.Fatalf("send form missing data-body attribute")
+	}
+	// The picker must carry the spoofed sender so it can pre-fill the From fields.
+	if !strings.Contains(out, "data-from=") || !strings.Contains(out, "data-fromname=") {
+		t.Fatalf("send form missing data-from/data-fromname attributes")
 	}
 }
 
