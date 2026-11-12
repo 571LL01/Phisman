@@ -71,6 +71,20 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		h.artifacts(w, r, campaignIDFromPath(p, 3))
 
+	case matchPath(p, `/admin/campaigns/[^/]+/report\.csv`):
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w, "GET")
+			return
+		}
+		h.reportCSV(w, r, campaignIDFromPath(p, 3))
+
+	case matchPath(p, `/admin/campaigns/[^/]+/tracking`):
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w, "GET")
+			return
+		}
+		h.tracking(w, r, campaignIDFromPath(p, 3))
+
 	case matchPath(p, `/admin/campaigns/[^/]+/send`):
 		switch r.Method {
 		case http.MethodGet:
@@ -279,6 +293,91 @@ func (h *Handler) artifacts(w http.ResponseWriter, r *http.Request, id string) {
 	})
 }
 
+func (h *Handler) reportCSV(w http.ResponseWriter, r *http.Request, id string) {
+	c, err := h.deps.GetCampaign(r.Context(), id)
+	if err != nil || c == nil {
+		http.NotFound(w, r)
+		return
+	}
+	rep, err := h.deps.ContactReport(r.Context(), id)
+	if err != nil {
+		h.internalError(w, "contact report", err)
+		return
+	}
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="rapport-`+safeFilename(c.Name)+`.csv"`)
+	w.Header().Set("Cache-Control", "no-store")
+
+	cw := csv.NewWriter(w)
+	_ = cw.Write([]string{"email", "contact_id", "envoye", "envoye_le", "ouvert", "ouvert_le", "clique", "clique_le", "soumis", "soumis_le"})
+	for _, row := range rep.Rows {
+		_ = cw.Write([]string{
+			row.Email, row.ID,
+			yesNo(row.Sent), row.SentAt,
+			yesNo(row.Opened), row.OpenedAt,
+			yesNo(row.Clicked), row.ClickedAt,
+			yesNo(row.Submitted), row.SubmittedAt,
+		})
+	}
+	cw.Flush()
+}
+
+func yesNo(b bool) string {
+	if b {
+		return "oui"
+	}
+	return "non"
+}
+
+// safeFilename keeps a filename header free of anything that could break the
+// Content-Disposition header or the local filesystem: only letters, digits,
+// '-' and '_' survive, everything else becomes '-'.
+func safeFilename(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('-')
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	if out == "" {
+		return "campagne"
+	}
+	if len(out) > 60 {
+		out = out[:60]
+	}
+	return out
+}
+
+func (h *Handler) tracking(w http.ResponseWriter, r *http.Request, id string) {
+	csrf, err := h.deps.IssueCSRF(w)
+	if err != nil {
+		h.internalError(w, "csrf", err)
+		return
+	}
+	c, err := h.deps.GetCampaign(r.Context(), id)
+	if err != nil || c == nil {
+		http.NotFound(w, r)
+		return
+	}
+	report, err := h.deps.ContactReport(r.Context(), id)
+	if err != nil {
+		h.internalError(w, "contact report", err)
+		return
+	}
+	h.render(w, "campaign-tracking", pageData{
+		Title:     "Suivi par contact — " + c.Name,
+		Active:    "campaigns",
+		Crumbs:    []crumb{{Label: "Campagnes", Href: "/admin/"}, {Label: c.Name, Href: "/admin/campaigns/" + id}, {Label: "Suivi par contact"}},
+		CSRF:      csrf,
+		Campaign:  c,
+		Tracking:  &report,
+	})
+}
+
 func (h *Handler) sendForm(w http.ResponseWriter, r *http.Request, id string) {
 	csrf, err := h.deps.IssueCSRF(w)
 	if err != nil {
@@ -292,13 +391,14 @@ func (h *Handler) sendForm(w http.ResponseWriter, r *http.Request, id string) {
 	}
 	tmpls := h.deps.AvailableTemplates(id)
 	h.render(w, "campaign-send", pageData{
-		Title:    "Envoyer — " + c.Name,
-		Active:   "campaigns",
-		Crumbs:   []crumb{{Label: "Campagnes", Href: "/admin/"}, {Label: c.Name, Href: "/admin/campaigns/" + id}, {Label: "Envoyer"}},
-		CSRF:     csrf,
-		Campaign: c,
-		Tmpls:    tmpls,
-		Send:     &sendView{},
+		Title:          "Envoyer — " + c.Name,
+		Active:         "campaigns",
+		Crumbs:         []crumb{{Label: "Campagnes", Href: "/admin/"}, {Label: c.Name, Href: "/admin/campaigns/" + id}, {Label: "Envoyer"}},
+		CSRF:           csrf,
+		Campaign:       c,
+		Tmpls:          tmpls,
+		EmailTemplates: BuiltinEmailTemplates,
+		Send:           &sendView{},
 	})
 }
 
@@ -354,15 +454,16 @@ func (h *Handler) sendRun(w http.ResponseWriter, r *http.Request, id string) {
 		}
 	}
 	h.render(w, "campaign-send", pageData{
-		Title:     "Envoyer — " + c.Name,
-		Active:    "campaigns",
-		Crumbs:    []crumb{{Label: "Campagnes", Href: "/admin/"}, {Label: c.Name, Href: "/admin/campaigns/" + id}, {Label: "Envoyer"}},
-		CSRF:      csrf,
-		Campaign:  c,
-		Tmpls:     tmpls,
-		Send:      sv,
-		Flash:     flash,
-		FlashKind: flashKind,
+		Title:          "Envoyer — " + c.Name,
+		Active:         "campaigns",
+		Crumbs:         []crumb{{Label: "Campagnes", Href: "/admin/"}, {Label: c.Name, Href: "/admin/campaigns/" + id}, {Label: "Envoyer"}},
+		CSRF:           csrf,
+		Campaign:       c,
+		Tmpls:          tmpls,
+		EmailTemplates: BuiltinEmailTemplates,
+		Send:           sv,
+		Flash:          flash,
+		FlashKind:      flashKind,
 	})
 }
 

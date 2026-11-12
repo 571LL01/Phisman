@@ -33,7 +33,7 @@ internal/collect     — capture AES-256-GCM des artefacts
 internal/tmpl        — rendu html/template, assets embarqués
 internal/lethe       — templates built-in (TMP-001 … TMP-004)
 internal/charon      — export JSON Lines authentifié par token
-internal/store       — schéma opérationnel SQLite (campagnes, contacts, envois)
+internal/store       — schéma opérationnel SQLite (campagnes, contacts, envois, événements)
 internal/db          — handle SQLite partagé, migrations, WAL
 internal/dga         — génération déterministe de domaines (HMAC-SHA256)
 internal/mail        — composition MIME + envoi SMTP STARTTLS
@@ -350,6 +350,7 @@ sirencore -retire-key 1 -config config.json
 | `tmp-002` | Vérification bancaire | Email + IBAN + Code postal | Confirmation (email rappelé) |
 | `tmp-003` | Signature de contrat | Email professionnel | Upload certificat `.p12`/`.pfx` (`file`) |
 | `tmp-004` | Réinitialisation | Email | Phrase de récupération (`seed`, jamais tronquée) |
+| `tmp-005` | Connexion webmail/SSO | Email + mot de passe (`password`, haché) | — (mono-étape) |
 
 Trois variantes de langue par template : **fr**, **en**, **de**.
 
@@ -375,6 +376,64 @@ Sélection de la langue : `?l=` exact → `Accept-Language` → `fr` → premier
 **Idempotence des envois** : un contact ayant déjà un enregistrement `sent` pour ce template+étape est sauté. Un enregistrement `failed` est réessayé.
 
 **Plafond `PriorStep`** : basé sur les enregistrements d'envoi (ce que le mailer a envoyé), pas sur les artefacts collectés (ce que le visiteur a soumis). La gating par artefact est différée.
+
+---
+
+## Suivi : ouvertures et clics
+
+Avant une soumission de formulaire (artefact chiffré), deux étapes du tunnel
+étaient invisibles : le destinataire a-t-il **ouvert** l'email, a-t-il
+**cliqué** sur le lien. La table `events` (migration 0007) les enregistre. Le
+tunnel complet est donc :
+
+```
+Envoyé (sends) → Ouvert (events.open) → Cliqué (events.click) → Soumis (artifacts)
+```
+
+`events` est une métadonnée opérationnelle en clair, comme `sends` : elle ne
+contient **jamais** de secret capturé (seulement `campaign_id`, `contact_id`,
+`template_id`, `step_id`, `kind`, `occurred_at`, `remote_ip`, `user_agent`).
+Une ligne n'est écrite que si le `rid` résout vers un contact de la campagne.
+
+### Ouverture (pixel)
+
+Un GIF transparent 1×1 est servi sous le préfixe beacon :
+
+```
+GET <beacon_prefix>/o/{campaign}/{template}/{step}?rid=<contactID>
+```
+
+Le mailer (UI de gestion) injecte automatiquement
+`<img src="…/o/…?rid=…" width="1" height="1" style="display:none">` dans tout
+corps d'email **HTML**. Placement explicite possible via le jeton `{{.Pixel}}`.
+Un corps en texte brut n'embarque pas de pixel (une partie texte ne peut pas
+porter d'image).
+
+> **Fiabilité — à lire avant tout rapport client.** Le suivi d'ouverture repose
+> sur le chargement d'une image. Il est **sur-compté** : Gmail et Outlook
+> préchargent et proxient les images (une ouverture peut être le proxy du
+> fournisseur, pas l'humain). Il est **sous-compté** : si les images sont
+> bloquées, l'ouverture n'est jamais vue. Interpréter « ouvert » comme
+> « vu ou préchargé », jamais comme une certitude. L'IP d'ouverture est souvent
+> celle du proxy du fournisseur, pas celle de la cible. C'est le standard du
+> domaine (GoPhish, etc.) ; il se documente, il ne se tait pas.
+
+### Clic
+
+Le `GET` de la page d'hameçonnage (`/c/{campaign}/{template}/{step}?rid=…`)
+enregistre un événement `click` dès que le `rid` est résolu — donc même si la
+cible lit la page et repart **sans rien saisir**. L'enregistrement est
+best-effort sur un contexte détaché : une cible qui quitte immédiatement est
+quand même comptée, et une panne de stockage ne change rien à ce que la page
+affiche. Une visite sans `rid` (prévisualisation) n'enregistre rien.
+
+### Statistiques
+
+Le tableau de bord (`/admin/`) et la page de campagne affichent le tunnel en
+**contacts distincts** : un contact qui ouvre trois fois et clique deux fois
+compte 1 à chaque étape. Les taux (`Ouverts/Envois A`, `Cliqués/Envois A`) sont
+des pourcentages entiers. Les soumissions d'identifiants restent sur la page
+*Artefacts*.
 
 ---
 
@@ -660,6 +719,8 @@ Toute opération hors fenêtre requiert une autorisation écrite préalable.
 
 - Délivrance de pages d'hameçonnage aux contacts de la liste.
 - Capture des artefacts soumis (chiffrés AES-256-GCM, jamais en clair en base).
+- Enregistrement des événements de suivi (ouverture via pixel, clic sur le lien) :
+  métadonnée en clair (`contact_id`, horodatage, IP, user-agent), jamais de secret.
 - Envoi d'emails depuis les adresses et domaines listés en §2.4.
 - Lecture IMAP read-only (`EXAMINE`, `SEARCH`, `FETCH BODY.PEEK`) sur les boîtes listées en §2.1.
 - Vérification du mot de passe capturé contre le serveur IMAP intra-tenant (§2.4). Résultat : booléen. Le mot de passe n'est ni stocké ni loggué.

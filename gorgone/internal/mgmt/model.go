@@ -16,18 +16,64 @@ type Campaign struct {
 	Stats      Stats
 }
 
-// Stats aggregates campaign metrics shown on the detail page.
+// Stats aggregates campaign metrics shown on the detail page. Opened and
+// Clicked are distinct-contact funnel counts; a contact who opens or clicks
+// many times is counted once.
 type Stats struct {
 	Contacts  int
 	SentA     int
 	SentB     int
+	Opened    int
+	Clicked   int
 	Artifacts int
+}
+
+// OpenRate returns opened/sent-A as a whole-number percentage, or 0 when no
+// step-A email was sent. It is a display helper, so it rounds and never panics.
+func (s Stats) OpenRate() int { return pct(s.Opened, s.SentA) }
+
+// ClickRate returns clicked/sent-A as a whole-number percentage.
+func (s Stats) ClickRate() int { return pct(s.Clicked, s.SentA) }
+
+func pct(n, d int) int {
+	if d <= 0 {
+		return 0
+	}
+	return n * 100 / d
 }
 
 // ContactInput is one row from the CSV import.
 type ContactInput struct {
 	Email string
 	Vars  map[string]string
+}
+
+// ContactStatus is one row of the per-contact tracking table: for a single
+// recipient, which funnel stages fired and when. It is assembled by joining
+// contacts, sends, events and artifacts.
+type ContactStatus struct {
+	ID        string
+	Email     string
+	Sent      bool
+	Opened    bool
+	Clicked   bool
+	Submitted bool
+	// Timestamps are the FIRST occurrence of each stage, pre-formatted for
+	// display ("—" when the stage never happened).
+	SentAt      string
+	OpenedAt    string
+	ClickedAt   string
+	SubmittedAt string
+}
+
+// ContactReport is the per-campaign tracking table plus its roll-up counts.
+type ContactReport struct {
+	Rows      []ContactStatus
+	Total     int
+	Sent      int
+	Opened    int
+	Clicked   int
+	Submitted int
 }
 
 // ArtifactRow is one decrypted artifact displayed in the UI.
@@ -39,12 +85,25 @@ type ArtifactRow struct {
 	ReceivedAt string
 	RemoteIP   string
 	Fields     []KV
+	// Secrets lists the sensitive fields that were captured. The clear value is
+	// never kept (the engine stores only a SHA-256 and the length), so these
+	// rows prove "an OTP/password of N characters was submitted" without
+	// harvesting the credential itself.
+	Secrets []SecretKV
 }
 
 // KV is a display-safe field name/value pair.
 type KV struct {
 	Name  string
 	Value string
+}
+
+// SecretKV describes a captured secret without its value: the field name, its
+// kind (otp, password, iban, pan, seed) and the submitted length.
+type SecretKV struct {
+	Name   string
+	Kind   string
+	Length int
 }
 
 // SendRequest carries the parameters from the send form.
@@ -107,6 +166,10 @@ type Deps struct {
 
 	// Artifacts
 	ListArtifacts func(ctx context.Context, campaignID string) ([]ArtifactRow, error)
+
+	// ContactReport assembles the per-contact tracking table (received, opened,
+	// clicked, submitted) for one campaign.
+	ContactReport func(ctx context.Context, campaignID string) (ContactReport, error)
 
 	// Email sending
 	SendEmails func(ctx context.Context, req SendRequest) (SendResult, error)

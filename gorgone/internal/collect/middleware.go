@@ -170,8 +170,16 @@ func (c *Collector) Capture(campaignID, templateID, stepID string) http.HandlerF
 		// the next page then puts it in its own form action. An unknown rid
 		// stays empty and the next page renders anonymously rather than 404.
 		redirect := target
-		if isInternalTarget(target) && a.ContactID != "" {
-			redirect = withQueryParam(redirect, "rid", a.ContactID)
+		if isInternalTarget(target) {
+			// The delivered link, the rendered page and this redirect must all
+			// name the same campaign. The config target carries the config key
+			// (e.g. "acme"); rewrite it to the campaign the request arrived on
+			// (the delivery id) so the next step's submission and attribution
+			// stay under one campaign instead of splitting off onto the key.
+			redirect = rewriteCampaign(redirect, campaignID)
+			if a.ContactID != "" {
+				redirect = withQueryParam(redirect, "rid", a.ContactID)
+			}
 		}
 		http.Redirect(w, r, redirect, http.StatusFound)
 	}
@@ -189,6 +197,22 @@ func withQueryParam(raw, key, value string) string {
 	q.Set(key, value)
 	u.RawQuery = q.Encode()
 	return u.String()
+}
+
+// rewriteCampaign replaces the campaign segment of an internal "/c/" target
+// with campaignID, preserving the template, step and any query string. A target
+// that is not of the "/c/<campaign>/..." shape is returned unchanged.
+func rewriteCampaign(target, campaignID string) string {
+	const prefix = "/c/"
+	if campaignID == "" || !strings.HasPrefix(target, prefix) {
+		return target
+	}
+	rest := target[len(prefix):] // "<campaign>/<template>/<step>[?query]"
+	slash := strings.IndexByte(rest, '/')
+	if slash < 0 {
+		return target
+	}
+	return prefix + url.PathEscape(campaignID) + rest[slash:]
 }
 
 func (c *Collector) parse(r *http.Request, multipart bool) error {

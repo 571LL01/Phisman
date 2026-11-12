@@ -370,6 +370,9 @@ type opsStore interface {
 	contactLoader
 	charon.TokenStore
 	ListCampaigns(ctx context.Context) ([]store.Campaign, error)
+	// RecordEvent persists an open/click tracking event. The render and pixel
+	// paths use it to fill the funnel stages that precede a submission.
+	RecordEvent(ctx context.Context, in store.EventInput) error
 }
 
 // newHandler is the whole routing surface in one place, so a test can exercise
@@ -433,6 +436,7 @@ func newHandlerWithAdmin(cfg *fileConfig, st collect.Store, ops opsStore, logger
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", healthHandler)
 	mux.HandleFunc(collector.BeaconPattern(), collector.BeaconHandler())
+	mux.HandleFunc(openPixelPattern(cfg.BeaconPrefix), openPixelHandler(ops, resolve, cfg.trusted, logger))
 	mux.Handle(tmpl.AssetsPrefix+"/{campaign}/{template}/{file}", renderer.AssetsHandler())
 	mux.Handle(charon.ExportPrefix+"/{campaign}", charon.NewHandler(st, ops, logger))
 	mux.HandleFunc("/c/{campaign}/{template}/{step}", func(w http.ResponseWriter, r *http.Request) {
@@ -474,6 +478,26 @@ func newHandlerWithAdmin(cfg *fileConfig, st collect.Store, ops opsStore, logger
 					return
 				}
 				vars = tmpl.Vars(contact.Vars)
+
+				// A GET with a resolved recipient is a click: the target
+				// followed the delivered link and the page loaded. Record it
+				// best-effort on a detached context so a visitor who navigates
+				// away immediately still counts, and a storage hiccup never
+				// changes what the page renders.
+				evCtx, evCancel := context.WithTimeout(context.WithoutCancel(r.Context()), trackingTimeout)
+				if err := ops.RecordEvent(evCtx, store.EventInput{
+					CampaignID: campaignID,
+					ContactID:  rid,
+					TemplateID: templateID,
+					StepID:     stepID,
+					Kind:       store.EventClick,
+					RemoteIP:   collect.ClientIP(r, cfg.trusted),
+					UserAgent:  r.Header.Get("User-Agent"),
+				}); err != nil {
+					logger.Error("click event persist failed",
+						"campaign", campaignID, "contact", rid, "err", err)
+				}
+				evCancel()
 			}
 
 			// The renderer template map is keyed by the config campaign ID
@@ -486,10 +510,11 @@ func newHandlerWithAdmin(cfg *fileConfig, st collect.Store, ops opsStore, logger
 			w.Header().Set("Referrer-Policy", "no-referrer")
 			w.Header().Set("X-Content-Type-Options", "nosniff")
 			if err := renderer.Render(w, tmpl.Page{
-				Campaign:  renderCampaignID,
-				Template:  templateID,
-				Step:      stepID,
-				ContactID: rid,
+				Campaign:     renderCampaignID,
+				Template:     templateID,
+				Step:         stepID,
+				ContactID:    rid,
+				LinkCampaign: campaignID,
 			}, step, vars, r.Header.Get("Accept-Language"), r.URL.Query().Get("l")); err != nil {
 				logger.Error("render failed",
 					"campaign", campaignID, "template", templateID, "step", stepID, "err", err)

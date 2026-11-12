@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
@@ -17,6 +18,7 @@ type Fake struct {
 	campaigns map[string]*Campaign
 	contacts  map[string]*Contact
 	sends     map[string]*Send
+	events    map[string]*Event
 	now       func() time.Time
 }
 
@@ -27,6 +29,7 @@ func NewFake() *Fake {
 		campaigns: make(map[string]*Campaign),
 		contacts:  make(map[string]*Contact),
 		sends:     make(map[string]*Send),
+		events:    make(map[string]*Event),
 		now:       func() time.Time { return time.Now().UTC() },
 	}
 }
@@ -223,6 +226,80 @@ func (f *Fake) ListSendsByCampaign(_ context.Context, campaignID string) ([]Send
 	sort.Slice(out, func(i, j int) bool {
 		if !out[i].SentAt.Equal(out[j].SentAt) {
 			return out[i].SentAt.Before(out[j].SentAt)
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out, nil
+}
+
+func (f *Fake) RecordEvent(_ context.Context, in EventInput) error {
+	if strings.TrimSpace(in.CampaignID) == "" {
+		return errors.New("store: event campaign_id is required")
+	}
+	if strings.TrimSpace(in.ContactID) == "" {
+		return errors.New("store: event contact_id is required")
+	}
+	if in.Kind != EventOpen && in.Kind != EventClick {
+		return fmt.Errorf("store: invalid event kind %q", in.Kind)
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	at := in.OccurredAt
+	if at.IsZero() {
+		at = f.now()
+	} else {
+		at = at.UTC()
+	}
+	e := &Event{
+		ID:         newID(),
+		CampaignID: in.CampaignID,
+		ContactID:  in.ContactID,
+		TemplateID: in.TemplateID,
+		StepID:     in.StepID,
+		Kind:       in.Kind,
+		OccurredAt: at,
+		RemoteIP:   in.RemoteIP,
+		UserAgent:  in.UserAgent,
+	}
+	f.events[e.ID] = e
+	return nil
+}
+
+func (f *Fake) EventStats(_ context.Context, campaignID string) (EventStats, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	opened := make(map[string]struct{})
+	clicked := make(map[string]struct{})
+	for _, e := range f.events {
+		if e.CampaignID != campaignID {
+			continue
+		}
+		switch e.Kind {
+		case EventOpen:
+			opened[e.ContactID] = struct{}{}
+		case EventClick:
+			clicked[e.ContactID] = struct{}{}
+		}
+	}
+	return EventStats{Opened: len(opened), Clicked: len(clicked)}, nil
+}
+
+func (f *Fake) ListEventsByCampaign(_ context.Context, campaignID string) ([]Event, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	out := make([]Event, 0)
+	for _, e := range f.events {
+		if e.CampaignID == campaignID {
+			out = append(out, *e)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].OccurredAt.Equal(out[j].OccurredAt) {
+			return out[i].OccurredAt.Before(out[j].OccurredAt)
 		}
 		return out[i].ID < out[j].ID
 	})

@@ -6,6 +6,43 @@ import (
 	"testing"
 )
 
+func TestTmp005SingleStepLoginShipsThreeLanguages(t *testing.T) {
+	def, ok := Lookup("tmp-005")
+	if !ok {
+		t.Fatal("tmp-005 is not registered")
+	}
+	variants, ok := def.Steps["a"]
+	if !ok {
+		t.Fatal("tmp-005 step \"a\" is missing")
+	}
+	if len(variants) != 3 {
+		t.Fatalf("step a has %d variants, want 3", len(variants))
+	}
+	seen := make(map[string]bool, 3)
+	for _, v := range variants {
+		seen[v.Lang] = true
+		for name, value := range map[string]string{
+			"title": v.Title, "heading": v.Heading, "intro": v.Intro, "submit": v.Submit, "note": v.Note,
+		} {
+			if strings.TrimSpace(value) == "" {
+				t.Fatalf("lang %q: %s is empty", v.Lang, name)
+			}
+		}
+	}
+	for _, lang := range []string{"fr", "en", "de"} {
+		if !seen[lang] {
+			t.Fatalf("missing %q variant", lang)
+		}
+	}
+	// Assets must be embedded and resolvable.
+	if _, err := fs.Stat(def.Assets, "style.css"); err != nil {
+		t.Fatalf("tmp-005 style.css: %v", err)
+	}
+	if _, err := fs.Stat(def.Assets, "mark.svg"); err != nil {
+		t.Fatalf("tmp-005 mark.svg: %v", err)
+	}
+}
+
 func TestShippedTemplatesShipThreeLanguagesForBothSteps(t *testing.T) {
 	for _, templateID := range []string{"tmp-001", "tmp-002", "tmp-003", "tmp-004"} {
 		t.Run(templateID, func(t *testing.T) {

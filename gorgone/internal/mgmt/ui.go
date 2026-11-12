@@ -17,9 +17,11 @@ type pageData struct {
 	Token     string // freshly issued export token (shown once)
 	Contacts  int    // count after import
 	Artifacts []ArtifactRow
-	Send      *sendView
-	SMTP      *SMTPSettings
-	Tmpls     []TemplateInfo // for send form dropdowns
+	Tracking  *ContactReport
+	Send           *sendView
+	SMTP           *SMTPSettings
+	Tmpls          []TemplateInfo  // for send form dropdowns
+	EmailTemplates []EmailTemplate // ready-made email bodies for the send form
 }
 
 type crumb struct {
@@ -143,6 +145,41 @@ input[type=checkbox]{width:1rem;height:1rem;flex-shrink:0}
 .token-box{font-family:ui-monospace,monospace;font-size:.82rem;padding:.6rem .9rem;
   background:#fefce8;border:1px solid #fde68a;border-radius:.4rem;word-break:break-all}
 .sep-line{border:0;border-top:1px solid var(--line);margin:1rem 0}
+.funnel{display:flex;flex-direction:column;gap:.7rem}
+.funnel-stage{position:relative}
+.funnel-bar{height:30px;border-radius:.35rem;background:#bfdbfe;min-width:3px;
+  transition:width .3s ease}
+.funnel-bar.fb-open{background:#bae6fd}
+.funnel-bar.fb-click{background:#fde68a}
+.funnel-meta{position:absolute;top:0;left:.6rem;right:.6rem;height:30px;
+  display:flex;align-items:center;justify-content:space-between;gap:1rem;
+  font-size:.78rem;color:var(--ink);font-weight:600;pointer-events:none}
+.funnel-k{white-space:nowrap}
+.funnel-v{white-space:nowrap;font-variant-numeric:tabular-nums}
+.mark{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;
+  border-radius:999px;font-size:.72rem;font-weight:700}
+.mark.yes{background:#d1fae5;color:#065f46}
+.mark.no{background:#f1f5f9;color:#cbd5e1}
+.ts{font-size:.72rem;color:var(--muted);white-space:nowrap}
+.table-wrap{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
+.table-wrap table{min-width:640px}
+.table-wrap td .btn{white-space:nowrap}
+@media (max-width:760px){
+  body{display:block}
+  .side{position:static;width:100%;min-height:auto;flex-direction:row;flex-wrap:wrap;
+    align-items:center;gap:.25rem;padding:.4rem .6rem}
+  .logo{border-bottom:0;padding:.4rem .5rem}
+  .nav-sep{display:none}
+  .nav-item{padding:.4rem .6rem}
+  .nav-item.on{border-left:0;border-bottom:2px solid #3b82f6}
+  .side-foot{margin-top:0;margin-left:auto;padding:.4rem .5rem;border-top:0}
+  .btn-out{width:auto}
+  .main{margin-left:0}
+  .content{padding:1rem}
+  .page-h{flex-direction:column}
+  .stats{gap:.5rem}
+  .stat{min-width:calc(50% - .5rem)}
+}
 </style>
 {{end}}
 `
@@ -201,8 +238,8 @@ const allPages = `
 </div>
 <div class="card">
 {{if .Campaigns}}
-<table>
-<thead><tr><th>Nom</th><th>ID</th><th>État</th><th>Contacts</th><th>Envois A</th><th>Artefacts</th><th></th></tr></thead>
+<div class="table-wrap"><table>
+<thead><tr><th>Nom</th><th>ID</th><th>État</th><th>Contacts</th><th>Envois A</th><th>Ouverts</th><th>Clics</th><th></th></tr></thead>
 <tbody>
 {{range .Campaigns}}
 <tr>
@@ -211,12 +248,13 @@ const allPages = `
   <td><span class="badge {{template "badgeClass" .State}}">{{template "stateLabel" .State}}</span></td>
   <td>{{.Stats.Contacts}}</td>
   <td>{{.Stats.SentA}}</td>
-  <td>{{.Stats.Artifacts}}</td>
+  <td>{{.Stats.Opened}}{{if .Stats.SentA}} <span style="color:var(--faint)">({{.Stats.OpenRate}}%)</span>{{end}}</td>
+  <td>{{.Stats.Clicked}}{{if .Stats.SentA}} <span style="color:var(--faint)">({{.Stats.ClickRate}}%)</span>{{end}}</td>
   <td><a class="btn btn-s btn-sm" href="/admin/campaigns/{{.ID}}">Gérer →</a></td>
 </tr>
 {{end}}
 </tbody>
-</table>
+</table></div>
 {{else}}
 <div class="empty">
   <strong>Aucune campagne</strong>
@@ -286,8 +324,35 @@ const allPages = `
 <div class="stats">
   <div class="stat"><div class="stat-n">{{.Stats.Contacts}}</div><div class="stat-l">Contacts</div></div>
   <div class="stat"><div class="stat-n">{{.Stats.SentA}}</div><div class="stat-l">Envois étape A</div></div>
-  <div class="stat"><div class="stat-n">{{.Stats.SentB}}</div><div class="stat-l">Envois étape B</div></div>
-  <div class="stat"><div class="stat-n">{{.Stats.Artifacts}}</div><div class="stat-l">Artefacts capturés</div></div>
+  <div class="stat"><div class="stat-n">{{.Stats.Opened}}</div><div class="stat-l">Ouvertures{{if .Stats.SentA}} · {{.Stats.OpenRate}}%{{end}}</div></div>
+  <div class="stat"><div class="stat-n">{{.Stats.Clicked}}</div><div class="stat-l">Clics{{if .Stats.SentA}} · {{.Stats.ClickRate}}%{{end}}</div></div>
+</div>
+
+<div class="card">
+<div class="card-head"><h2>Tunnel de conversion</h2></div>
+<div class="card-body">
+  <div class="funnel">
+    <div class="funnel-stage">
+      <div class="funnel-bar" style="width:100%"></div>
+      <div class="funnel-meta"><span class="funnel-k">Envoyés (A)</span><span class="funnel-v">{{.Stats.SentA}}</span></div>
+    </div>
+    <div class="funnel-stage">
+      <div class="funnel-bar fb-open" style="width:{{.Stats.OpenRate}}%"></div>
+      <div class="funnel-meta"><span class="funnel-k">Ouverts</span><span class="funnel-v">{{.Stats.Opened}} · {{.Stats.OpenRate}}%</span></div>
+    </div>
+    <div class="funnel-stage">
+      <div class="funnel-bar fb-click" style="width:{{.Stats.ClickRate}}%"></div>
+      <div class="funnel-meta"><span class="funnel-k">Cliqués</span><span class="funnel-v">{{.Stats.Clicked}} · {{.Stats.ClickRate}}%</span></div>
+    </div>
+  </div>
+  <p class="hint" style="margin-top:.8rem">
+    Contacts distincts par étape, en % des envois de l'étape A.
+    L'ouverture dépend du chargement d'une image : elle est <strong>sur-comptée</strong>
+    par les proxys d'images (Gmail, Outlook) et <strong>sous-comptée</strong> si les
+    images sont bloquées. À interpréter comme « vu ou préchargé », jamais comme une certitude.
+    Les soumissions d'identifiants sont dans <a href="/admin/campaigns/{{.ID}}/artifacts">Artefacts</a>.
+  </p>
+</div>
 </div>
 
 {{if $.Token}}
@@ -337,6 +402,7 @@ const allPages = `
   <div class="btn-g">
     <a class="btn btn-s" href="/admin/campaigns/{{.ID}}/contacts">📋 Importer des contacts</a>
     <a class="btn btn-s" href="/admin/campaigns/{{.ID}}/send">📧 Envoyer les emails</a>
+    <a class="btn btn-s" href="/admin/campaigns/{{.ID}}/tracking">👥 Suivi par contact</a>
     <a class="btn btn-s" href="/admin/campaigns/{{.ID}}/artifacts">🔍 Voir les artefacts</a>
   </div>
   <hr class="sep-line">
@@ -424,7 +490,7 @@ bob@example.com,en,Bob</pre>
 {{end}}
 <div class="card">
 {{if $.Artifacts}}
-<table>
+<div class="table-wrap"><table>
 <thead><tr>
   <th>Reçu le</th><th>Modèle</th><th>Étape</th><th>Contact</th><th>IP</th><th>Champs capturés</th>
 </tr></thead>
@@ -438,25 +504,94 @@ bob@example.com,en,Bob</pre>
   <td class="mono">{{.RemoteIP}}</td>
   <td>
     {{range .Fields}}
+    <div style="font-size:.78rem"><strong>{{.Name}}</strong> : {{.Value}}</div>
+    {{end}}
+    {{range .Secrets}}
     <div style="font-size:.78rem"><strong>{{.Name}}</strong> :
-      {{if eq .Name "password"}}
-        <span style="color:var(--muted)">••••••••</span>
-      {{else if eq .Name "seed"}}
-        <span style="color:var(--muted)">••• (phrase de récupération) •••</span>
-      {{else}}
-        {{.Value}}
-      {{end}}
+      <span class="badge ba">{{.Kind}}</span>
+      <span style="color:var(--muted)">{{.Length}} car. · capturé 🔒 (haché, valeur non conservée)</span>
     </div>
     {{end}}
+    {{if and (not .Fields) (not .Secrets)}}<span style="color:var(--faint)">—</span>{{end}}
   </td>
 </tr>
 {{end}}
 </tbody>
-</table>
+</table></div>
 {{else}}
 <div class="empty"><strong>Aucun artefact</strong><p>Aucune soumission reçue pour cette campagne.</p></div>
 {{end}}
 </div>
+</div></div>
+</body></html>
+{{end}}
+
+{{define "mark"}}{{if .}}<span class="mark yes">✓</span>{{else}}<span class="mark no">–</span>{{end}}{{end}}
+
+{{define "campaign-tracking"}}
+<!doctype html><html lang="fr"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{.Title}} — SIREN</title>{{template "css" .}}</head>
+<body>
+{{template "nav" .}}
+<div class="main">
+{{template "topbar" .}}
+<div class="content">
+{{template "flash" .}}
+{{with .Campaign}}
+<div class="page-h">
+  <div><h1>Suivi par contact</h1>
+  <p class="sub">Campagne : <strong>{{.Name}}</strong></p></div>
+  <div class="btn-g">
+    <a class="btn btn-p btn-sm" href="/admin/campaigns/{{.ID}}/report.csv">⬇ Exporter CSV</a>
+    <a class="btn btn-s btn-sm" href="/admin/campaigns/{{.ID}}">← Retour</a>
+  </div>
+</div>
+{{end}}
+{{with .Tracking}}
+<div class="stats">
+  <div class="stat"><div class="stat-n">{{.Total}}</div><div class="stat-l">Contacts</div></div>
+  <div class="stat"><div class="stat-n">{{.Sent}}</div><div class="stat-l">Reçu</div></div>
+  <div class="stat"><div class="stat-n">{{.Opened}}</div><div class="stat-l">Ouvert</div></div>
+  <div class="stat"><div class="stat-n">{{.Clicked}}</div><div class="stat-l">Cliqué</div></div>
+  <div class="stat"><div class="stat-n">{{.Submitted}}</div><div class="stat-l">A soumis</div></div>
+</div>
+<div class="card">
+{{if .Rows}}
+<div class="table-wrap"><table>
+<thead><tr>
+  <th>Contact</th><th>Reçu</th><th>Ouvert</th><th>Cliqué</th><th>A soumis</th><th>Dernière action</th>
+</tr></thead>
+<tbody>
+{{range .Rows}}
+<tr>
+  <td><strong>{{.Email}}</strong><br><span class="mono" style="font-size:.7rem;color:var(--faint)">{{.ID}}</span></td>
+  <td>{{template "mark" .Sent}}{{if .SentAt}}<div class="ts">{{.SentAt}}</div>{{end}}</td>
+  <td>{{template "mark" .Opened}}{{if .OpenedAt}}<div class="ts">{{.OpenedAt}}</div>{{end}}</td>
+  <td>{{template "mark" .Clicked}}{{if .ClickedAt}}<div class="ts">{{.ClickedAt}}</div>{{end}}</td>
+  <td>{{template "mark" .Submitted}}{{if .SubmittedAt}}<div class="ts">{{.SubmittedAt}}</div>{{end}}</td>
+  <td>
+    {{if .Submitted}}<span class="badge br">A soumis</span>
+    {{else if .Clicked}}<span class="badge ba">A cliqué</span>
+    {{else if .Opened}}<span class="badge bd">A ouvert</span>
+    {{else if .Sent}}<span class="badge bc">Envoyé</span>
+    {{else}}<span style="color:var(--faint)">—</span>{{end}}
+  </td>
+</tr>
+{{end}}
+</tbody>
+</table></div>
+{{else}}
+<div class="empty"><strong>Aucun contact</strong><p>Importez des contacts pour cette campagne.</p></div>
+{{end}}
+</div>
+<p class="hint">
+  « A soumis » = le contact a envoyé le formulaire (identifiants capturés, visibles dans
+  <a href="/admin/campaigns/{{$.Campaign.ID}}/artifacts">Artefacts</a>).
+  « Ouvert » dépend du chargement du pixel (sur-compté par les proxys, sous-compté si images bloquées) ;
+  « Cliqué » est le signal fiable.
+</p>
+{{end}}
 </div></div>
 </body></html>
 {{end}}
@@ -546,6 +681,19 @@ bob@example.com,en,Bob</pre>
   <p style="font-size:.8rem;font-weight:600;margin-bottom:.6rem">
     Contenu du mail <span style="color:var(--muted);font-weight:400">(optionnel — laissez vide pour le texte par défaut)</span>
   </p>
+  {{if $.EmailTemplates}}
+  <div class="fg">
+    <label for="email_tmpl">Modèle d'email prêt à l'emploi</label>
+    <select id="email_tmpl"
+      onchange="var o=this.options[this.selectedIndex];if(o.dataset.subject!==undefined){document.getElementById('email_subject').value=o.dataset.subject;document.getElementById('email_body').value=o.dataset.body;}">
+      <option value="">— Partir d'un modèle (remplit sujet + corps) —</option>
+      {{range $.EmailTemplates}}
+      <option value="{{.ID}}" data-subject="{{.Subject}}" data-body="{{.Body}}">{{.Name}}</option>
+      {{end}}
+    </select>
+    <p class="hint">Choisir un modèle remplit les champs ci-dessous ; vous pouvez ensuite les modifier. Le lien <code>&#123;&#123;.Link&#125;&#125;</code> et le pixel d'ouverture sont gérés automatiquement.</p>
+  </div>
+  {{end}}
   <div class="fg">
     <label for="email_subject">Sujet</label>
     <input type="text" id="email_subject" name="email_subject"

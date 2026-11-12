@@ -48,8 +48,8 @@ func TestMigrateFromEmptyIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("version: %v", err)
 	}
-	if version != 6 {
-		t.Fatalf("version = %d, want 6", version)
+	if version != 7 {
+		t.Fatalf("version = %d, want 7", version)
 	}
 	if n := countRows(t, d, `SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'artifacts'`); n != 1 {
 		t.Fatalf("artifacts table = %d, want 1", n)
@@ -63,8 +63,8 @@ func TestMigrateFromEmptyIsIdempotent(t *testing.T) {
 	if err := sirendb.Migrate(ctx, d.DB); err != nil {
 		t.Fatalf("second migrate: %v", err)
 	}
-	if n := countRows(t, d, `SELECT COUNT(*) FROM schema_migrations`); n != 6 {
-		t.Fatalf("migration rows = %d, want 6", n)
+	if n := countRows(t, d, `SELECT COUNT(*) FROM schema_migrations`); n != 7 {
+		t.Fatalf("migration rows = %d, want 7", n)
 	}
 	var appliedAgain string
 	if err := d.QueryRow(`SELECT applied_at FROM schema_migrations WHERE version = 1`).Scan(&appliedAgain); err != nil {
@@ -87,7 +87,7 @@ func TestMigrateRefusesNewerSchema(t *testing.T) {
 	if err := sirendb.Migrate(ctx, d.DB); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	if _, err := d.Exec(`UPDATE schema_migrations SET version = 7 WHERE version = 6`); err != nil {
+	if _, err := d.Exec(`UPDATE schema_migrations SET version = 8 WHERE version = 7`); err != nil {
 		t.Fatalf("tamper version: %v", err)
 	}
 
@@ -333,6 +333,67 @@ func testStoreContract(t *testing.T, st store.Store) {
 	}
 	if _, err := st.ListSendsByCampaign(ctx, "missing"); !errors.Is(err, store.ErrCampaignNotFound) {
 		t.Fatalf("ListSendsByCampaign missing campaign = %v", err)
+	}
+
+	// --- tracking events (open / click) --------------------------------------
+	//
+	// The funnel counts DISTINCT contacts: alice opens twice and clicks once,
+	// bob opens once. Opened must be 2 (alice, bob), Clicked must be 1 (alice),
+	// even though four event rows exist.
+	base := time.Date(2026, 3, 1, 9, 0, 0, 0, time.UTC)
+	evs := []store.EventInput{
+		{CampaignID: campaign.ID, ContactID: alice.ID, TemplateID: "t1", StepID: "a", Kind: store.EventOpen, RemoteIP: "203.0.113.5", UserAgent: "UA-1", OccurredAt: base},
+		{CampaignID: campaign.ID, ContactID: alice.ID, TemplateID: "t1", StepID: "a", Kind: store.EventOpen, OccurredAt: base.Add(time.Minute)},
+		{CampaignID: campaign.ID, ContactID: alice.ID, TemplateID: "t1", StepID: "a", Kind: store.EventClick, OccurredAt: base.Add(2 * time.Minute)},
+		{CampaignID: campaign.ID, ContactID: bob.ID, TemplateID: "t1", StepID: "a", Kind: store.EventOpen, OccurredAt: base.Add(3 * time.Minute)},
+	}
+	for i, in := range evs {
+		if err := st.RecordEvent(ctx, in); err != nil {
+			t.Fatalf("RecordEvent[%d]: %v", i, err)
+		}
+	}
+
+	stats, err := st.EventStats(ctx, campaign.ID)
+	if err != nil {
+		t.Fatalf("EventStats: %v", err)
+	}
+	if stats.Opened != 2 || stats.Clicked != 1 {
+		t.Fatalf("EventStats = %+v, want {Opened:2 Clicked:1}", stats)
+	}
+
+	events, err := st.ListEventsByCampaign(ctx, campaign.ID)
+	if err != nil {
+		t.Fatalf("ListEventsByCampaign: %v", err)
+	}
+	if len(events) != 4 {
+		t.Fatalf("ListEventsByCampaign = %d events, want 4", len(events))
+	}
+	// Ordered by (occurred_at, id): the first row is alice's first open, which
+	// carries the IP and user agent we supplied.
+	if events[0].Kind != store.EventOpen || events[0].RemoteIP != "203.0.113.5" || events[0].UserAgent != "UA-1" {
+		t.Fatalf("first event = %+v", events[0])
+	}
+	for i := 1; i < len(events); i++ {
+		if events[i].OccurredAt.Before(events[i-1].OccurredAt) {
+			t.Fatalf("events out of order at %d", i)
+		}
+	}
+
+	// A campaign with no events reports a zero funnel, not an error.
+	zero, err := st.EventStats(ctx, other.ID)
+	if err != nil {
+		t.Fatalf("EventStats other: %v", err)
+	}
+	if zero.Opened != 0 || zero.Clicked != 0 {
+		t.Fatalf("EventStats other = %+v, want zero", zero)
+	}
+
+	// Validation: unknown kind and empty identifiers are refused.
+	if err := st.RecordEvent(ctx, store.EventInput{CampaignID: campaign.ID, ContactID: alice.ID, Kind: "hover"}); err == nil {
+		t.Fatalf("RecordEvent with invalid kind must fail")
+	}
+	if err := st.RecordEvent(ctx, store.EventInput{CampaignID: campaign.ID, ContactID: "", Kind: store.EventOpen}); err == nil {
+		t.Fatalf("RecordEvent with empty contact must fail")
 	}
 }
 

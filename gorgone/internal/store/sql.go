@@ -331,6 +331,77 @@ func (s *SQL) ListSendsByCampaign(ctx context.Context, campaignID string) ([]Sen
 	return out, nil
 }
 
+func (s *SQL) RecordEvent(ctx context.Context, in EventInput) error {
+	if strings.TrimSpace(in.CampaignID) == "" {
+		return errors.New("store: event campaign_id is required")
+	}
+	if strings.TrimSpace(in.ContactID) == "" {
+		return errors.New("store: event contact_id is required")
+	}
+	if in.Kind != EventOpen && in.Kind != EventClick {
+		return fmt.Errorf("store: invalid event kind %q", in.Kind)
+	}
+	at := in.OccurredAt
+	if at.IsZero() {
+		at = time.Now().UTC()
+	} else {
+		at = at.UTC()
+	}
+	if _, err := s.db.ExecContext(ctx,
+		`INSERT INTO events (id, campaign_id, contact_id, template_id, step_id, kind, occurred_at, remote_ip, user_agent)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		newID(), in.CampaignID, in.ContactID, in.TemplateID, in.StepID, in.Kind,
+		sirendb.FormatTime(at), in.RemoteIP, in.UserAgent,
+	); err != nil {
+		return fmt.Errorf("store: record event: %w", err)
+	}
+	return nil
+}
+
+func (s *SQL) EventStats(ctx context.Context, campaignID string) (EventStats, error) {
+	var st EventStats
+	// One pass, two conditional distinct counts: a recipient who opened three
+	// times and clicked twice contributes 1 to each column.
+	err := s.db.QueryRowContext(ctx,
+		`SELECT
+			COUNT(DISTINCT CASE WHEN kind = 'open'  THEN contact_id END),
+			COUNT(DISTINCT CASE WHEN kind = 'click' THEN contact_id END)
+		 FROM events WHERE campaign_id = ?`, campaignID).Scan(&st.Opened, &st.Clicked)
+	if err != nil {
+		return EventStats{}, fmt.Errorf("store: event stats: %w", err)
+	}
+	return st, nil
+}
+
+func (s *SQL) ListEventsByCampaign(ctx context.Context, campaignID string) ([]Event, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, campaign_id, contact_id, template_id, step_id, kind, occurred_at, remote_ip, user_agent
+		 FROM events WHERE campaign_id = ? ORDER BY occurred_at, id`, campaignID)
+	if err != nil {
+		return nil, fmt.Errorf("store: list events: %w", err)
+	}
+	defer rows.Close()
+
+	var out []Event
+	for rows.Next() {
+		var e Event
+		var occurred string
+		if err := rows.Scan(&e.ID, &e.CampaignID, &e.ContactID, &e.TemplateID,
+			&e.StepID, &e.Kind, &occurred, &e.RemoteIP, &e.UserAgent); err != nil {
+			return nil, fmt.Errorf("store: list events: %w", err)
+		}
+		e.OccurredAt, err = sirendb.ParseTime(occurred)
+		if err != nil {
+			return nil, fmt.Errorf("store: event %s occurred_at: %w", e.ID, err)
+		}
+		out = append(out, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: list events: %w", err)
+	}
+	return out, nil
+}
+
 func (s *SQL) SetExportTokenHash(ctx context.Context, campaignID, hash string) error {
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE campaigns SET export_token_hash = ?, updated_at = ? WHERE id = ?`,

@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/smtp"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -104,10 +105,80 @@ func buildMgmtDeps(
 				for k, v := range a.Fields {
 					row.Fields = append(row.Fields, mgmt.KV{Name: k, Value: v})
 				}
+				sort.Slice(row.Fields, func(i, j int) bool { return row.Fields[i].Name < row.Fields[j].Name })
+				// Secrets carry no clear value: show that the credential was
+				// captured (name, kind, length), never the value itself.
+				for k, s := range a.Secrets {
+					row.Secrets = append(row.Secrets, mgmt.SecretKV{Name: k, Kind: string(s.Kind), Length: s.Length})
+				}
+				sort.Slice(row.Secrets, func(i, j int) bool { return row.Secrets[i].Name < row.Secrets[j].Name })
 				rows = append(rows, row)
 				return nil
 			})
 			return rows, err
+		},
+
+		ContactReport: func(ctx context.Context, campaignID string) (mgmt.ContactReport, error) {
+			contacts, err := st.ListContacts(ctx, campaignID)
+			if err != nil {
+				return mgmt.ContactReport{}, err
+			}
+			sends, err := st.ListSendsByCampaign(ctx, campaignID)
+			if err != nil {
+				return mgmt.ContactReport{}, err
+			}
+			events, err := st.ListEventsByCampaign(ctx, campaignID)
+			if err != nil {
+				return mgmt.ContactReport{}, err
+			}
+
+			// First occurrence per contact for each stage.
+			firstSent := earliestByContact(len(sends))
+			for _, s := range sends {
+				firstSent.add(s.ContactID, s.SentAt)
+			}
+			firstOpen := earliestByContact(0)
+			firstClick := earliestByContact(0)
+			for _, e := range events {
+				switch e.Kind {
+				case store.EventOpen:
+					firstOpen.add(e.ContactID, e.OccurredAt)
+				case store.EventClick:
+					firstClick.add(e.ContactID, e.OccurredAt)
+				}
+			}
+			firstSubmit := earliestByContact(0)
+			if err := cst.Export(ctx, campaignID, time.Time{}, func(a *collect.Artifact) error {
+				if a.ContactID != "" {
+					firstSubmit.add(a.ContactID, a.ReceivedAt)
+				}
+				return nil
+			}); err != nil {
+				return mgmt.ContactReport{}, err
+			}
+
+			rep := mgmt.ContactReport{Total: len(contacts)}
+			for _, c := range contacts {
+				row := mgmt.ContactStatus{ID: c.ID, Email: c.Email}
+				if t, ok := firstSent.get(c.ID); ok {
+					row.Sent, row.SentAt = true, mgmt.FormatTime(t)
+					rep.Sent++
+				}
+				if t, ok := firstOpen.get(c.ID); ok {
+					row.Opened, row.OpenedAt = true, mgmt.FormatTime(t)
+					rep.Opened++
+				}
+				if t, ok := firstClick.get(c.ID); ok {
+					row.Clicked, row.ClickedAt = true, mgmt.FormatTime(t)
+					rep.Clicked++
+				}
+				if t, ok := firstSubmit.get(c.ID); ok {
+					row.Submitted, row.SubmittedAt = true, mgmt.FormatTime(t)
+					rep.Submitted++
+				}
+				rep.Rows = append(rep.Rows, row)
+			}
+			return rep, nil
 		},
 
 		SendEmails: func(ctx context.Context, req mgmt.SendRequest) (mgmt.SendResult, error) {
@@ -173,7 +244,37 @@ func campaignToMgmt(ctx context.Context, c store.Campaign, st store.Store) mgmt.
 			}
 		}
 	}
+	if es, err := st.EventStats(ctx, c.ID); err == nil {
+		mc.Stats.Opened = es.Opened
+		mc.Stats.Clicked = es.Clicked
+	}
 	return mc
+}
+
+// firstSeen keeps the earliest timestamp seen per contact id. It makes the
+// per-contact report read "when did this stage first happen", not "how many
+// times", which is what the operator-facing table shows.
+type firstSeen struct{ m map[string]time.Time }
+
+func earliestByContact(hint int) firstSeen {
+	if hint < 0 {
+		hint = 0
+	}
+	return firstSeen{m: make(map[string]time.Time, hint)}
+}
+
+func (f firstSeen) add(id string, t time.Time) {
+	if id == "" {
+		return
+	}
+	if cur, ok := f.m[id]; !ok || t.Before(cur) {
+		f.m[id] = t
+	}
+}
+
+func (f firstSeen) get(id string) (time.Time, bool) {
+	t, ok := f.m[id]
+	return t, ok
 }
 
 // newCombinedAdminRouter builds the full /admin/* handler:
@@ -317,7 +418,9 @@ func runSend(ctx context.Context, st store.Store, smtpCfg mgmt.SMTPSettings, req
 			effective.FromName = req.FromName
 		}
 		link := buildLink(smtpCfg.BaseURL, req.CampaignID, req.TemplateID, req.StepID, c.ID)
-		if err := sendSMTP(effective, c.Email, link, req.EmailSubject, req.EmailBody); err != nil {
+		pixel := buildPixel(smtpCfg.BaseURL, effectiveBeaconPrefix(fileCfg.BeaconPrefix),
+			req.CampaignID, req.TemplateID, req.StepID, c.ID)
+		if err := sendSMTP(effective, c.Email, link, pixel, req.EmailSubject, req.EmailBody); err != nil {
 			logger.Error("mgmt: smtp send failed", "contact", c.ID, "err", err)
 			res.Failed++
 		} else {
@@ -340,11 +443,51 @@ func buildLink(baseURL, campaignID, templateID, stepID, contactID string) string
 	return fmt.Sprintf("%s/c/%s/%s/%s?rid=%s", base, campaignID, templateID, stepID, contactID)
 }
 
+// buildPixel builds the open-tracking URL embedded in HTML emails. It mirrors
+// buildLink under the beacon prefix with a leading "o" segment, so a GET of the
+// image records an open for the same recipient the link would attribute a click
+// to.
+func buildPixel(baseURL, beaconPrefix, campaignID, templateID, stepID, contactID string) string {
+	base := strings.TrimRight(baseURL, "/")
+	return fmt.Sprintf("%s%s/o/%s/%s/%s?rid=%s", base, beaconPrefix, campaignID, templateID, stepID, contactID)
+}
+
+// composeEmailBody renders the final body and its Content-Type. An empty
+// operator body yields the plain-text default (no pixel: a text part cannot
+// carry an image). A non-empty body has {{.Link}} and {{.Pixel}} substituted;
+// it becomes HTML when it contains a tag or an explicit {{.Pixel}}, and the
+// open-tracking pixel is injected — at {{.Pixel}} if present, otherwise appended
+// so a bare HTML email still tracks opens.
+func composeEmailBody(link, pixel, body string) (contentType, out string) {
+	contentType = "text/plain; charset=UTF-8"
+	if body == "" {
+		return contentType, fmt.Sprintf("Veuillez accéder au lien suivant pour compléter votre demande :\r\n\r\n%s\r\n", link)
+	}
+	body = strings.ReplaceAll(body, "{{.Link}}", link)
+
+	hadPixelToken := strings.Contains(body, "{{.Pixel}}")
+	if strings.Contains(body, "<") || hadPixelToken {
+		contentType = "text/html; charset=UTF-8"
+	}
+
+	pixelTag := ""
+	if pixel != "" && contentType == "text/html; charset=UTF-8" {
+		pixelTag = fmt.Sprintf(`<img src="%s" width="1" height="1" alt="" style="display:none">`, pixel)
+	}
+	if hadPixelToken {
+		body = strings.ReplaceAll(body, "{{.Pixel}}", pixelTag)
+	} else if pixelTag != "" {
+		body = body + "\r\n" + pixelTag
+	}
+	return contentType, strings.ReplaceAll(body, "\n", "\r\n")
+}
+
 // sendSMTP sends one email via STARTTLS SMTP. The password is read from the
 // file each call so a rotation on disk takes effect without restart.
-// subject and body are the per-send template; body may contain {{.Link}}.
-// If empty, built-in defaults are used.
-func sendSMTP(s mgmt.SMTPSettings, to, link, subject, body string) error {
+// subject and body are the per-send template; body may contain {{.Link}} and
+// {{.Pixel}}. If body is empty, a built-in plain-text default is used (no open
+// tracking: a plain-text part cannot carry an image).
+func sendSMTP(s mgmt.SMTPSettings, to, link, pixel, subject, body string) error {
 	port := s.Port
 	if port == "" {
 		port = "587"
@@ -369,20 +512,11 @@ func sendSMTP(s mgmt.SMTPSettings, to, link, subject, body string) error {
 	if subject == "" {
 		subject = "Important : vérification requise"
 	}
-	contentType := "text/plain; charset=UTF-8"
-	if body == "" {
-		body = fmt.Sprintf("Veuillez accéder au lien suivant pour compléter votre demande :\r\n\r\n%s\r\n", link)
-	} else {
-		body = strings.ReplaceAll(body, "{{.Link}}", link)
-		if strings.Contains(body, "<") {
-			contentType = "text/html; charset=UTF-8"
-		}
-		body = strings.ReplaceAll(body, "\n", "\r\n")
+	contentType, body := composeEmailBody(link, pixel, body)
+	msg, err := buildMessage(fromHeader, from, to, subject, contentType, body)
+	if err != nil {
+		return fmt.Errorf("compose message: %w", err)
 	}
-	msg := []byte(fmt.Sprintf(
-		"From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: %s\r\n\r\n%s",
-		fromHeader, to, subject, contentType, body,
-	))
 
 	conn, err := net.DialTimeout("tcp", addr, 10*time.Second)
 	if err != nil {

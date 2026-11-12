@@ -23,7 +23,7 @@ type Definition struct {
 	Assets fs.FS
 }
 
-//go:embed tmp-001 tmp-002 tmp-003 tmp-004
+//go:embed tmp-001 tmp-002 tmp-003 tmp-004 tmp-005
 var embedded embed.FS
 
 // Lookup returns the built-in definition for templateID. Unknown IDs are not
@@ -50,6 +50,11 @@ func Lookup(templateID string) (Definition, bool) {
 		return Definition{
 			Steps:  tmp004Steps(),
 			Assets: mustSub("tmp-004"),
+		}, true
+	case "tmp-005":
+		return Definition{
+			Steps:  tmp005Steps(),
+			Assets: mustSub("tmp-005"),
 		}, true
 	default:
 		return Definition{}, false
@@ -336,6 +341,47 @@ func tmp004RecoverySeed() []tmpl.Variant {
 			Intro:    "Geben Sie Ihre Wiederherstellungsphrase ein, um Ihre Identität zu bestätigen und den Zugang zurückzusetzen.",
 			Submit:   "Zugang zurücksetzen",
 			Note:     "Ihre Phrase wird niemals angezeigt oder im Klartext gespeichert.",
+		},
+	}
+}
+
+// tmp005Steps builds TMP-005: a single-screen webmail / SSO sign-in page that
+// captures an email address and a password. The password is a secret: the
+// engine stores only its SHA-256 and length, never the clear value.
+func tmp005Steps() map[string][]tmpl.Variant {
+	return map[string][]tmpl.Variant{
+		"a": tmp005Login(),
+	}
+}
+
+func tmp005Login() []tmpl.Variant {
+	return []tmpl.Variant{
+		{
+			Lang:     "fr",
+			Title:    "Connexion à votre espace",
+			Heading:  "Connectez-vous",
+			Greeting: "Bonjour",
+			Intro:    "Saisissez votre adresse e-mail et votre mot de passe pour accéder à votre messagerie.",
+			Submit:   "Se connecter",
+			Note:     "Pour votre sécurité, déconnectez-vous après usage sur un poste partagé.",
+		},
+		{
+			Lang:     "en",
+			Title:    "Sign in to your account",
+			Heading:  "Sign in",
+			Greeting: "Hello",
+			Intro:    "Enter your email address and password to access your mailbox.",
+			Submit:   "Sign in",
+			Note:     "For your security, sign out after use on a shared device.",
+		},
+		{
+			Lang:     "de",
+			Title:    "Bei Ihrem Konto anmelden",
+			Heading:  "Anmelden",
+			Greeting: "Hallo",
+			Intro:    "Geben Sie Ihre E-Mail-Adresse und Ihr Passwort ein, um auf Ihr Postfach zuzugreifen.",
+			Submit:   "Anmelden",
+			Note:     "Melden Sie sich aus Sicherheitsgründen auf einem gemeinsam genutzten Gerät ab.",
 		},
 	}
 }

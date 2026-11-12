@@ -91,6 +91,52 @@ type SendInput struct {
 	SentAt time.Time
 }
 
+// Event kinds are the tracking-funnel stages recorded before a submission.
+// A send is already in sends; a submission is already an artifact. These two
+// fill the gap: did the recipient open the email, and did they click through.
+const (
+	EventOpen  = "open"
+	EventClick = "click"
+)
+
+// Event is one recorded interaction of a known contact with a campaign. It is
+// plaintext operational metadata; it never holds a captured secret.
+type Event struct {
+	ID         string
+	CampaignID string
+	ContactID  string
+	TemplateID string
+	StepID     string
+	Kind       string
+	OccurredAt time.Time
+	RemoteIP   string
+	UserAgent  string
+}
+
+// EventInput carries the fields a caller supplies when recording an event.
+type EventInput struct {
+	CampaignID string
+	ContactID  string
+	TemplateID string
+	StepID     string
+	Kind       string
+	RemoteIP   string
+	UserAgent  string
+	// OccurredAt defaults to the current UTC time when zero.
+	OccurredAt time.Time
+}
+
+// EventStats is the per-campaign funnel, counted as DISTINCT contacts so a
+// recipient who reloads the pixel or revisits the page is counted once.
+type EventStats struct {
+	// Opened is the number of distinct contacts seen by the open pixel. It is
+	// an upper bound on real human opens: mail providers prefetch and proxy
+	// images, so an open here means "seen or preloaded", never a certainty.
+	Opened int
+	// Clicked is the number of distinct contacts who loaded the phishing page.
+	Clicked int
+}
+
 // Store is the operational schema consumed by the campaign, sending and admin
 // planes. SQL is the durable implementation; Fake is the in-memory one used by
 // consumers that do not need SQLite.
@@ -112,6 +158,16 @@ type Store interface {
 
 	RecordSend(ctx context.Context, in SendInput) (*Send, error)
 	ListSendsByCampaign(ctx context.Context, campaignID string) ([]Send, error)
+
+	// RecordEvent appends one tracking event (open or click). It is best-effort
+	// evidence of a funnel stage, not a transaction the visitor can observe:
+	// callers log an error and move on rather than failing the request.
+	RecordEvent(ctx context.Context, in EventInput) error
+	// EventStats returns the distinct-contact funnel counts for one campaign.
+	EventStats(ctx context.Context, campaignID string) (EventStats, error)
+	// ListEventsByCampaign returns every recorded event for a campaign in
+	// (occurred_at, id) order. It backs the operator-facing export.
+	ListEventsByCampaign(ctx context.Context, campaignID string) ([]Event, error)
 
 	// SetExportTokenHash stores the SHA-256 of a campaign's export token. The
 	// clear token is never persisted. GetExportTokenHash returns "" when no

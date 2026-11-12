@@ -79,16 +79,34 @@ type Coord struct {
 // Page identifies the step being rendered. The three values are used to build
 // the form action and the asset URL, so they are path-escaped individually.
 type Page struct {
+	// Campaign is the key used to look up the template and its assets. In a live
+	// deployment this is the config campaign key (e.g. "acme").
 	Campaign string
 	Template string
 	Step     string
 	// ContactID is carried in the form action as ?rid= so a POST keeps the
 	// recipient attribution of the delivery link. Empty means no recipient.
 	ContactID string
+	// LinkCampaign is the campaign segment written into the form action URL.
+	// It is the campaign the visitor's link used (the DB campaign id), which may
+	// differ from Campaign (the config key used to find the template). When
+	// empty it falls back to Campaign. Keeping them separate is what makes a
+	// submission land back on the same campaign the link, click and contact
+	// attribution use, instead of on the config key.
+	LinkCampaign string
 }
 
 func (p Page) coord() Coord {
 	return Coord{Campaign: p.Campaign, Template: p.Template}
+}
+
+// actionCampaign is the campaign segment for the form action URL: the link
+// campaign when set, otherwise the lookup campaign.
+func (p Page) actionCampaign() string {
+	if p.LinkCampaign != "" {
+		return p.LinkCampaign
+	}
+	return p.Campaign
 }
 
 // Variant is one localized presentation. Every human-visible string lives here
@@ -369,7 +387,7 @@ func (r *Renderer) renderVariant(w io.Writer, t Template, page Page, step collec
 		styleURL = AssetsPrefix + "/" + url.PathEscape(page.Campaign) + "/" + url.PathEscape(page.Template) + "/style.css"
 	}
 
-	action := "/c/" + url.PathEscape(page.Campaign) + "/" + url.PathEscape(page.Template) + "/" + url.PathEscape(page.Step)
+	action := "/c/" + url.PathEscape(page.actionCampaign()) + "/" + url.PathEscape(page.Template) + "/" + url.PathEscape(page.Step)
 	if q := actionQuery(page.ContactID, override, variant.Lang); q != "" {
 		action += "?" + q
 	}

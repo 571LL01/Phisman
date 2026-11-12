@@ -153,6 +153,34 @@
               }
             ]
           }
+        },
+        "tmp-005": {
+          "a": {
+            "target": "https://example.com/account",
+            "mode": "inline",
+            "fields": [
+              {
+                "name": "email",
+                "kind": "text",
+                "max_len": 254,
+                "labels": {
+                  "fr": "Adresse e-mail",
+                  "en": "Email address",
+                  "de": "E-Mail-Adresse"
+                }
+              },
+              {
+                "name": "password",
+                "kind": "password",
+                "max_len": 128,
+                "labels": {
+                  "fr": "Mot de passe",
+                  "en": "Password",
+                  "de": "Passwort"
+                }
+              }
+            ]
+          }
         }
       }
     }

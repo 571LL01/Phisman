@@ -166,6 +166,7 @@ func TestMigrateAdoptsLegacyArtifactsTable(t *testing.T) {
 	// Rebuild the pre-0003/0004 table shape. Rewinding version 4 also needs
 	// the campaigns table rebuilt without export_token_hash.
 	if _, err := d.Exec(`
+DROP TABLE events;
 DROP TABLE artifacts;
 CREATE TABLE artifacts (
 	id          TEXT PRIMARY KEY,
@@ -233,8 +234,8 @@ INSERT INTO sends (id, contact_id, template_id, step_id, sent_at, status)
 	if err != nil {
 		t.Fatalf("version: %v", err)
 	}
-	if version != 6 {
-		t.Fatalf("version = %d, want 6", version)
+	if version != 7 {
+		t.Fatalf("version = %d, want 7", version)
 	}
 	for _, table := range []string{"campaigns", "contacts", "sends", "artifacts", "admin_sessions"} {
 		if !tableExists(t, d, table) {
@@ -330,8 +331,8 @@ func TestConcurrentMigrateOnFreshFile(t *testing.T) {
 			if err != nil {
 				t.Fatalf("version: %v", err)
 			}
-			if version != 6 {
-				t.Fatalf("version = %d, want 6", version)
+			if version != 7 {
+				t.Fatalf("version = %d, want 7", version)
 			}
 			for _, table := range []string{"campaigns", "contacts", "sends", "artifacts"} {
 				if !tableExists(t, a, table) {
@@ -389,7 +390,7 @@ func TestAppliedAtUsesFixedWidth(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatalf("rows: %v", err)
 	}
-	if seen != 6 {
-		t.Fatalf("migration rows = %d, want 6", seen)
+	if seen != 7 {
+		t.Fatalf("migration rows = %d, want 7", seen)
 	}
 }

@@ -129,3 +129,59 @@ dans la gate CI.
 - Création/armement de campagnes depuis l'admin.
 - Rendu configurable ou thème.
 - `go test -race`, Docker et shellcheck en local (gate CI uniquement).
+
+---
+
+## Étape 14 — Tunnel de suivi (ouvertures et clics)
+
+### Objectif
+
+Rendre visibles les deux étapes du tunnel situées entre l'envoi et la
+soumission : l'**ouverture** de l'email et le **clic** sur le lien. Avant cette
+étape, une cible qui ouvrait, cliquait et lisait la fausse page sans rien
+soumettre était invisible.
+
+### Périmètre
+
+1. **Table `events` (migration 0007)** — métadonnée opérationnelle en clair, à
+   côté de `sends` : `campaign_id`, `contact_id`, `template_id`, `step_id`,
+   `kind ∈ {open, click}`, `occurred_at`, `remote_ip`, `user_agent`. FK vers
+   `campaigns` et `contacts`, index `(campaign_id, kind, contact_id)`. Jamais
+   de secret.
+2. **Store** — `RecordEvent`, `EventStats` (contacts distincts par `kind`),
+   `ListEventsByCampaign`, implémentés par `SQL` et `Fake`, couverts par le
+   contrat partagé `TestStoreContract`.
+3. **Ouverture** — pixel GIF 1×1 transparent servi sur
+   `<beacon_prefix>/o/{campaign}/{template}/{step}?rid=…` (4 segments : aucun
+   conflit avec le beacon post-interaction à 3 segments). Le mailer injecte le
+   pixel dans tout corps HTML ; jeton `{{.Pixel}}` pour un placement explicite.
+   L'image est toujours servie, l'attribution est best-effort.
+4. **Clic** — le `GET` de la page enregistre un `click` dès que le `rid` résout,
+   sur contexte détaché, sans jamais changer le rendu.
+5. **Statistiques** — tunnel en contacts distincts sur le dashboard et la page
+   de campagne, avec taux `Ouverts/Envois A` et `Cliqués/Envois A`.
+
+### Cas limites tranchés
+
+| Cas | Décision |
+|---|---|
+| `rid` absent ou inconnu sur le pixel/clic | Image/page servie, aucun événement enregistré. |
+| Coordonnée (template/step) inexistante sur le pixel | Image servie, non enregistrée (funnel propre). |
+| Même contact ouvre/clique N fois | Compté 1 fois par étape (`COUNT(DISTINCT contact_id)`). |
+| Corps d'email en texte brut | Pas de pixel (une partie texte ne porte pas d'image). |
+| Panne de stockage sur `RecordEvent` | Journalisée ; la page/le pixel répond normalement. |
+
+### Fiabilité (documentée, pas masquée)
+
+Le suivi d'ouverture dépend du chargement d'une image : sur-compté par les
+proxys d'images (Gmail, Outlook), sous-compté si les images sont bloquées. Il
+mesure « vu ou préchargé », jamais une certitude. Voir README § Suivi.
+
+### Hors périmètre (différé)
+
+- Export NDJSON des événements (le tunnel est visible en UI ; l'export reste
+  limité aux artefacts).
+- Décompte des soumissions dans le tunnel du dashboard (reste sur la page
+  Artefacts).
+- Suivi d'ouverture pour le chemin `internal/mail` (Composer/Runner), non câblé
+  dans l'UI actuelle.
