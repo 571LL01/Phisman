@@ -1,0 +1,3 @@
+{"time":"2026-11-12T17:05:33.9110436+01:00","level":"INFO","msg":"keyset loaded","active":1,"known":"AQ=="}
+{"time":"2026-11-12T17:05:33.9799903+01:00","level":"INFO","msg":"admin interface mounted","allowlist":1,"rate_limit":5,"dev_mode":true}
+{"time":"2026-11-12T17:05:33.981147+01:00","level":"INFO","msg":"listening","addr":"127.0.0.1:8080"}
